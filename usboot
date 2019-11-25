@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# TODO 
+# [] dectecting when the divice is pluged 
+# [] make the usb bootable 
+# [] 
+
+set -e errexit  
+[ ERR_CODE_STATUS ] 
+{
+    let "NO_ROOT_UID=0x3e8" 
+    let "LOAD_CONF_FAILED=0X003"
+}
+readonly  import=.
+conf=esd.cfg
+$import  ${conf} 
+
+[[  -f  ${conf} ]]  ||  { 
+    echo  "need config file!!"
+    exit ${LOAD_CONF_FAILED} 
+}
+
+[ UID_CHECK ] 
+[[  ${UID}  -eq ${ALLOWED_X_UUID}  ]]   ||  { 
+    echo -e "require root user !! exiting with SIG_ERR  ${NO_ROOT_UID}"
+    exit ${NO_ROOT_UID} 
+}
+
+device_partition  ()  { 
+    local  device_section=$(blkid | cut -d  : -f1)
+    echo ${device_section}
+} 
+ 
+IFS=" " read -a partions <<< $(device_partition)
+readonly  actual_partitions_size=${#partions[@]} 
+
+hotreload() {
+    local  analizing_timestamp=110
+    local  percentage=0
+    local  current_dev
+    while [[ true ]] ; do
+         IFS=" "  read  -a  dev  <<< $(device_partition)  
+         if [[  ${actual_partitions_size} -eq  ${#dev[@]} ]] ; then 
+             ($tui --title  "usboot" \
+                   --infobox "waiting for USB device  [ press CTRL + c to abort] "  5 54)
+             sleep 4
+        else
+            # analyzing usb device  
+            (
+            while [[  $percentage -ne  $analizing_timestamp ]]  ; do  
+                
+                echo $percentage  
+                echo  "###" 
+                echo "$percentage %" 
+                echo "###"
+                ((percentage+=10)) 
+                sleep 1
+            done ) | ($tui --title "USB driver analysing" \
+                           --gauge "Analysing device ... " 10 60)
+            
+            current_dev=${dev[-1]}  
+            break 
+        fi
+    done 
+    
+
+    echo $current_dev
+}
+
+hotreload
