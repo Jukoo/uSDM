@@ -1,17 +1,23 @@
 #!/bin/bash
 
 # TODO 
-# [] dectecting when the divice is pluged 
+# [x] dectecting when the divice is pluged 
+# []  make the menus for different opreation 
 # [] make the usb bootable 
 # [] 
 
-set -e errexit  
+set -e errexit 
+
 [ ERR_CODE_STATUS ] 
 {
-    let "NO_ROOT_UID=0x3e8" 
+    let "NO_ROOT_UID=0x3e8"  
     let "LOAD_CONF_FAILED=0X003"
+    let "MEDIA_MAKE_DIR_ERR=0X004"
+    let "ISO_EXT_NO_FOUND=0X005"
+    let "FILE_NOT_FOUND=0x006"
 }
-readonly  import=.
+
+readonly  import=source
 conf=esd.cfg
 $import  ${conf} 
 
@@ -26,29 +32,50 @@ $import  ${conf}
     exit ${NO_ROOT_UID} 
 }
 
+[ @PRIVATE ] 
+{
+    build_array_form() {
+        if [[ -z $1  ]] ; then 
+            echo -e "require  character separator partition"
+        fi
+    }
+
+}
+
+#------------------------------------------------
+# check 
 device_partition  ()  { 
+    #  get the current device partitions in the system 
     local  device_section=$(blkid | cut -d  : -f1)
     echo ${device_section}
 } 
  
 IFS=" " read -a partions <<< $(device_partition)
-readonly  actual_partitions_size=${#partions[@]} 
+declare actual_partitions_size=${#partions[@]} #  get devices entry point 
 
-hotreload() {
+declare  current_dev  # pluged  usb divice block  /dev/xxx  
+
+hotreload() {  #+  trun on background  until  the usb device is pluged  into the computer  
     local  analizing_timestamp=110
     local  percentage=0
-    local  current_dev
+    
     while [[ true ]] ; do
-         IFS=" "  read  -a  dev  <<< $(device_partition)  
+         IFS=" "  read  -a  dev  <<< $(device_partition)
+         echo  ${#dev[*]}
+         #echo  ${actual_partitions_size} 
          if [[  ${actual_partitions_size} -eq  ${#dev[@]} ]] ; then 
              ($tui --title  "usboot" \
                    --infobox "waiting for USB device  [ press CTRL + c to abort] "  5 54)
-             sleep 4
-        else
+             echo  ${#dev[*]} 
+          #   echo  ${actual_partitions_size}
+             sleep $USB_LED_SIG_FREQ
+             
+             # Bug fix -< avoid analyser  when the usb is  unpluged  >- 
+         
+         elif  [[  ${actual_partitions_size} -lt  ${#dev[@]}  ]] ; then  
             # analyzing usb device  
             (
             while [[  $percentage -ne  $analizing_timestamp ]]  ; do  
-                
                 echo $percentage  
                 echo  "###" 
                 echo "$percentage %" 
@@ -58,13 +85,130 @@ hotreload() {
             done ) | ($tui --title "USB driver analysing" \
                            --gauge "Analysing device ... " 10 60)
             
-            current_dev=${dev[-1]}  
+            current_dev=${dev[-1]} # get the latest device pluged in the system   
             break 
+        elif  [[  ${actual_partitions_size}  -gt  ${#dev[@]}  ]] ; then 
+              # refresh the locate block  device attribute  
+              notify-send --urgency=normal "please replug your device"
+              IFS=" " read  -a   block_device  <<<  $(device_partition)
+              actual_partitions_size=${#block_device[@]}
         fi
     done 
     
 
-    echo $current_dev
+}
+#hotreload
+
+# prepare to mount the usb device 
+# TODO  
+# []  unmount  the usb device
+make_mount_point ()  {  #  
+    if [[  ! -d ${MOUNT_TARGET} ]]  ; then  
+        $(mkdir  ${MOUNT_TARGET})
+        test $? -eq $((0x00))   ||   {
+            echo -e  "media maker failed  SIG_ERR  ${MEDIA_MAKE_DIR_ERR}" 
+            exit ${MEDIA_MAKE_DIR_ERR} 
+        } && {
+            echo "mounted"
+        }
+    fi 
+    # chech  if  the device existe in the system 
+    IFS=" " read -a  is_device_stay_pluged <<< $(device_partition) 
+    current_dev=${is_device_stay_pluged[-1]} 
+    if  [[ -n $current_dev  ]] ;then  
+        $(mount $current_dev  ${MOUNT_TARGET}) 
+         [[  $? -eq  0  ]] && {
+            # notification signal  
+            if [[ -x  ${uBIN}${NOTIFICATION} ]] ; then   
+                notify-send  "device successfully mounted" 
+             else  
+                echo "device successfully mounted"  
+            fi 
+    }
+   # else 
+   #     $(umount $current_dev) 
+   #   $(rm -r ${MOUNT_TARGET})  
+    fi 
 }
 
-hotreload
+#make_mount_point 
+
+declare  g_output_fd
+us_boot_main_menu () {
+     g_output_fd=$(${tui} --title " usBoot Menu" \
+            --backtitle $(basename $0) \
+            --menu  " Choose your operation :" 15 55 5 \
+            1 "USB Bootable Drive" \
+            2 "Formating USB Driver" \
+            3 "Check USB Driver Storage" \
+            4 "Reversing USB Driver" \
+            5 "Exit -> " \
+            --output-fd 1)
+}
+
+#us_boot_main_menu
+#echo ${g_output_fd}
+
+# MAKING USB BOOTABLE  DRIVE 
+# => get the file iso emplacement  
+# => pairing the iso with the usb partition  
+[  UNIVERSAL_SERIAL_BOOTABLE  ]  
+{
+usb_bootable_driver () {
+        # select file iso  
+        iso_path_file=$($tui --backtitle $(basename $0) \
+                        --title  "select your iso  file " \
+                        --fselect ${HOME}  15 50  \
+                        --output-fd 1)
+         
+        if [[ -n $iso_path_file ]] && [[ -f  $iso_path_file ]] ; then
+           
+            #  check  if the file is iso forma
+            local  iso_file_extension=${iso_path_file##*.}
+            [[   $iso_file_extension  == "iso"   ]]  ||  {
+                    echo  " no iso format found  SIG ERR ${ISO_EXT_NO_FOUND}"
+                    exit ${ISO_EXT_NO_FOUND}
+            } && {
+                declare  -r  input_file=${iso_path_file}
+                declare  -r  output_target=${current_dev}
+                if  [[ -z ${current_dev} ]]  ;  then 
+                         echo -e  "ERROR : NO MEDIA DEVICE  FOUND  aborting" 
+                         exit  234 
+                fi
+                
+                $(dd  bs=${RW_BYTES} \
+                       if=${input_file} \
+                       of=${output_target} \
+                       oflag=${FLAGS} \
+                       status=progress) 
+                [[  $?  -eq 0  ]] && {
+                     echo  -e " [ dOnNnnE]" 
+                     exit  0 
+                }||{
+                    echo  -e "some get catched while  building bootable usb" 
+                    exit 1
+                }
+            
+            }
+            
+        else 
+            echo -e "file not found  in your system  " 
+            exit ${FILE_NOT_FOUND}
+        fi  
+
+        
+        
+}  # -<     usb_bootable_driver   >- 
+}  # -< UNIVERSAL_SERIAL_BOOTABLE >-
+
+main ()  {
+    hotreload 
+    make_mount_point
+    us_boot_main_menu
+    case ${g_output_fd} in  
+        "1") usb_bootable_driver ;;
+    
+    esac 
+}
+
+main 
