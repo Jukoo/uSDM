@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# TODO 
-# [x] dectecting when the divice is pluged 
-# []  make the menus for different opreation 
-# [] make the usb bootable 
-# [] 
 
 set -e errexit 
 
@@ -15,7 +10,9 @@ set -e errexit
     let "MEDIA_MAKE_DIR_ERR=0X004"
     let "ISO_EXT_NO_FOUND=0X005"
     let "FILE_NOT_FOUND=0x006"
+
 }
+declare -i  EXIT_SUCCESS=$((0x00))
 
 readonly  import=source
 conf=esd.cfg
@@ -37,6 +34,25 @@ $import  ${conf}
     build_array_form() {
         if [[ -z $1  ]] ; then 
             echo -e "require  character separator partition"
+        fi
+    } 
+    
+    unmout_device  ()  {
+        if [[ -n  $1  ]]  ; then  
+            $( umount -f  $1 ) 
+            test  $? -eq 0  && {
+                (rm  -r ${MOUNT_TARGET})  
+                 [[ $? -eq 0 ]]  ||   {
+                  echo -e "cannot remove device  resource  is busy " 
+                  exit $? 
+                }  
+            }|| {
+                echo -e  "failed to umount the device exiting "   
+                read -p " hit the key board to exit"  
+                [[  -n ${REPLY}  ]]  && exit 2
+            }
+        else  
+            exit 12 
         fi
     }
 
@@ -66,12 +82,8 @@ hotreload() {  #+  trun on background  until  the usb device is pluged  into the
          if [[  ${actual_partitions_size} -eq  ${#dev[@]} ]] ; then 
              ($tui --title  "usboot" \
                    --infobox "waiting for USB device  [ press CTRL + c to abort] "  5 54)
-             echo  ${#dev[*]} 
-          #   echo  ${actual_partitions_size}
              sleep $USB_LED_SIG_FREQ
-             
-             # Bug fix -< avoid analyser  when the usb is  unpluged  >- 
-         
+
          elif  [[  ${actual_partitions_size} -lt  ${#dev[@]}  ]] ; then  
             # analyzing usb device  
             (
@@ -94,12 +106,9 @@ hotreload() {  #+  trun on background  until  the usb device is pluged  into the
               actual_partitions_size=${#block_device[@]}
         fi
     done 
-    
-
 }
 #hotreload
 
-# prepare to mount the usb device 
 # TODO  
 # []  unmount  the usb device
 make_mount_point ()  {  #  
@@ -125,7 +134,7 @@ make_mount_point ()  {  #
                 echo "device successfully mounted"  
             fi 
     }
-   # else 
+   # else i
    #     $(umount $current_dev) 
    #   $(rm -r ${MOUNT_TARGET})  
     fi 
@@ -154,7 +163,8 @@ us_boot_main_menu () {
 # => pairing the iso with the usb partition  
 [  UNIVERSAL_SERIAL_BOOTABLE  ]  
 {
-usb_bootable_driver () {
+
+usb_bootable_driver () { #  -<  create usb bootable device  >-  
         # select file iso  
         iso_path_file=$($tui --backtitle $(basename $0) \
                         --title  "select your iso  file " \
@@ -165,6 +175,9 @@ usb_bootable_driver () {
            
             #  check  if the file is iso forma
             local  iso_file_extension=${iso_path_file##*.}
+            
+            #TODO : [] analize the iso  file   check the boot sector 
+
             [[   $iso_file_extension  == "iso"   ]]  ||  {
                     echo  " no iso format found  SIG ERR ${ISO_EXT_NO_FOUND}"
                     exit ${ISO_EXT_NO_FOUND}
@@ -199,16 +212,73 @@ usb_bootable_driver () {
         
         
 }  # -<     usb_bootable_driver   >- 
+
+format_serial_device()  {  # -<  formating  seriale device -> 
+
+   # umount the device
+   if [[  -n  ${current_dev}  ]]   ; then 
+       
+        $(umount -f  ${current_dev}) 
+        #$(umount -f  ${MOUNT_TARGET})  
+        [[ $? -eq $((0x00)) ]] && {
+            $tui --infobox  "Processing  , please wait ..." 5 35  ; sleep $((0x003))   
+            # make  choice to select new file system 
+            build_fs=$($tui  --title "Serial  device Format" \
+                             --backtitle $(basename $0) \
+                             --radiolist  "file sys recorver" 20 40 15 \
+                             ext4    ext4    on  \
+                             fat     fat     off \
+                             cramfs  cramfs  off \
+                             msdos   msdos   off \
+                             jfs     jfs     off \
+                             ext3    ext3    off \
+                             ext2    ext2    off \
+                             minix   minix   off \
+                             bfs     bfs     off \
+                             exfat   exfat   off \
+                             ntfs    ntfs    off \
+                             reiser4 reiser4 off \
+                             xfs     xfs     off \
+                             vfat    vfat    off \
+                             --output-fd 1 ) 
+
+            #  install  the fs  in  serial device  
+            $(mkfs -t ${build_fs}  ${current_dev}) 
+            test $? -eq $((0x00))  && {
+                notify-send  "formating done with  ${build_fs} file sys  "  
+                exit 3 
+            } || { 
+                notify-send  "fail to format the device  " 
+                exit 3  
+            } 
+        } || {
+            echo -e "failed  to  umount  your device"  
+            exit  $? 
+        }
+    else  
+         echo  -e  "Undefine device section"
+      
+    fi
+
+
+
+}  # -<     format_serial_device  >-
+
 }  # -< UNIVERSAL_SERIAL_BOOTABLE >-
 
-main ()  {
+_::main::_ ()  {
     hotreload 
-    make_mount_point
+    make_mount_point  
+    
     us_boot_main_menu
     case ${g_output_fd} in  
         "1") usb_bootable_driver ;;
-    
-    esac 
+        "2") format_serial_device ;;
+        "5")  return ;;  
+    esac
+    return $EXIT_SUCCESS  
 }
 
-main 
+_::main::_
+#always umount the device  at the end 
+unmout_device
