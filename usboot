@@ -1,7 +1,28 @@
 #!/bin/bash
 
+: '
+                            ______             _____ 
+              ____  ___________  /_______________  /_
+              _  / / /_  ___/_  __ \  __ \  __ \  __/
+              / /_/ /_(__  )_  /_/ / /_/ / /_/ / /_  
+              \__,_/ /____/ /_.___/\____/\____/\__/  
+                                                    
+! Copyright (C) <2019>  <Juko>
+! This program is free software: you can redistribute it and/or modify
+! it under the terms of the GNU General Public License as published by
+! the Free Software Foundation, either version 3 of the License, or
+! (at your option) any later version.
+! This program is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+! GNU General Public License for more details.
+! You should have received a copy of the GNU General Public License
+! along with this program.  If not, see <https://www.gnu.org/licenses/>.
+'
 
 set -e errexit 
+
+readonly PN=$(basename ${0^^})   
 
 [ ERR_CODE_STATUS ] 
 {
@@ -10,9 +31,10 @@ set -e errexit
     let "MEDIA_MAKE_DIR_ERR=0X004"
     let "ISO_EXT_NO_FOUND=0X005"
     let "FILE_NOT_FOUND=0x006"
-
+    let "EBRUT_ABORD=0x007"
 }
 declare -i  EXIT_SUCCESS=$((0x00))
+declare -i  EXIT_FAILURE=$((0x01))
 
 readonly  import=source
 conf=esd.cfg
@@ -38,12 +60,14 @@ $import  ${conf}
     } 
     
     unmout_device  ()  {
-        if [[ -n  $1  ]]  ; then  
+        if [[ -n  $1  ]]  ; then
+            #+ force  to remove device 
             $( umount -f  $1 ) 
             test  $? -eq 0  && {
                 (rm  -r ${MOUNT_TARGET})  
                  [[ $? -eq 0 ]]  ||   {
                   echo -e "cannot remove device  resource  is busy " 
+                  notify-send  "cannot remove device  resource  is busy " 
                   exit $? 
                 }  
             }|| {
@@ -55,23 +79,36 @@ $import  ${conf}
             exit 12 
         fi
     }
-
+    
+    iso_parser () {
+        readonly  iso_metadata=$(file ${1})
+        [[   "${iso_metadata}" =~ "${COMMON_ISO_TYPE}" ]] && {
+       
+         return  ${EXIT_SUCCESS} 
+        }||{
+        return  ${EXIT_FAILURE} ; 
+        }
+    }
 }
 
 #------------------------------------------------
-# check 
+#+  check  block  device  attribute  
 device_partition  ()  { 
     #  get the current device partitions in the system 
     local  device_section=$(blkid | cut -d  : -f1)
     echo ${device_section}
 } 
- 
+
 IFS=" " read -a partions <<< $(device_partition)
-declare actual_partitions_size=${#partions[@]} #  get devices entry point 
 
-declare  current_dev  # pluged  usb divice block  /dev/xxx  
+#+  collect the the lenght  of all block  devices  
+declare actual_partitions_size=${#partions[@]}
 
-hotreload() {  #+  trun on background  until  the usb device is pluged  into the computer  
+declare  current_dev  # pluged  usb divice block  /dev/xxx 
+
+#+  trun on background  until  the usb device is pluged  into the computer
+#+  look constantly the  locate block device attributes  
+hotreload() {  
     local  analizing_timestamp=110
     local  percentage=0
     
@@ -79,11 +116,12 @@ hotreload() {  #+  trun on background  until  the usb device is pluged  into the
          IFS=" "  read  -a  dev  <<< $(device_partition)
          echo  ${#dev[*]}
          #echo  ${actual_partitions_size} 
+         #+ if   no change  happen   it means  we have the same  device on start 
          if [[  ${actual_partitions_size} -eq  ${#dev[@]} ]] ; then 
-             ($tui --title  "usboot" \
+             ($tui --title  "$(basename ${0^^})" \
                    --infobox "waiting for USB device  [ press CTRL + c to abort] "  5 54)
              sleep $USB_LED_SIG_FREQ
-
+    
          elif  [[  ${actual_partitions_size} -lt  ${#dev[@]}  ]] ; then  
             # analyzing usb device  
             (
@@ -99,6 +137,9 @@ hotreload() {  #+  trun on background  until  the usb device is pluged  into the
             
             current_dev=${dev[-1]} # get the latest device pluged in the system   
             break 
+        # + if  you plug your  usb device before  you  start the programme  
+        # + you  should  replug  it  to help the programme  refesh or recalculate  
+        # + the locate block  device  
         elif  [[  ${actual_partitions_size}  -gt  ${#dev[@]}  ]] ; then 
               # refresh the locate block  device attribute  
               notify-send --urgency=normal "please replug your device"
@@ -107,11 +148,8 @@ hotreload() {  #+  trun on background  until  the usb device is pluged  into the
         fi
     done 
 }
-#hotreload
 
-# TODO  
-# []  unmount  the usb device
-make_mount_point ()  {  #  
+make_mount_point ()  {  
     if [[  ! -d ${MOUNT_TARGET} ]]  ; then  
         $(mkdir  ${MOUNT_TARGET})
         test $? -eq $((0x00))   ||   {
@@ -121,9 +159,14 @@ make_mount_point ()  {  #
             echo "mounted"
         }
     fi 
-    # chech  if  the device existe in the system 
+    # chech  if  the device  still plug on the system 
     IFS=" " read -a  is_device_stay_pluged <<< $(device_partition) 
-    current_dev=${is_device_stay_pluged[-1]} 
+    #current_dev=${is_device_stay_pluged[-1]}
+    [[   ${is_device_stay_pluged[-1]} != ${current_dev}  ]]  && { 
+          printf  "%s \n" " device  ${current_dev}  not  found " 
+          notify-send  --urgency=critical  " device  ${current_dev} not found" 
+          exit $EBRUT_ABORD 
+    }  
     if  [[ -n $current_dev  ]] ;then  
         $(mount $current_dev  ${MOUNT_TARGET}) 
          [[  $? -eq  0  ]] && {
@@ -131,12 +174,10 @@ make_mount_point ()  {  #
             if [[ -x  ${uBIN}${NOTIFICATION} ]] ; then   
                 notify-send  "device successfully mounted" 
              else  
-                echo "device successfully mounted"  
+                notify-send   "device successfully mounted"  
             fi 
-    }
-   # else i
-   #     $(umount $current_dev) 
-   #   $(rm -r ${MOUNT_TARGET})  
+        }
+ 
     fi 
 }
 
@@ -145,71 +186,65 @@ make_mount_point ()  {  #
 declare  g_output_fd
 us_boot_main_menu () {
      g_output_fd=$(${tui} --title " usBoot Menu" \
-            --backtitle $(basename $0) \
-            --menu  " Choose your operation :" 15 55 5 \
+            --backtitle ${PN} \
+            --menu  " Choose your operation :" 15 55 5  \
             1 "USB Bootable Drive" \
             2 "Formating USB Driver" \
             3 "Check USB Driver Storage" \
             4 "Reversing USB Driver" \
-            5 "Exit -> " \
+            5 "USB encryption" \
+            6 "Exit -> " \
             --output-fd 1)
 }
 
-#us_boot_main_menu
-#echo ${g_output_fd}
-
-# MAKING USB BOOTABLE  DRIVE 
-# => get the file iso emplacement  
-# => pairing the iso with the usb partition  
 [  UNIVERSAL_SERIAL_BOOTABLE  ]  
 {
 
 usb_bootable_driver () { #  -<  create usb bootable device  >-  
         # select file iso  
-        iso_path_file=$($tui --backtitle $(basename $0) \
+        iso_path_file=$($tui --backtitle ${PN} \
                         --title  "select your iso  file " \
                         --fselect ${HOME}  15 50  \
                         --output-fd 1)
          
         if [[ -n $iso_path_file ]] && [[ -f  $iso_path_file ]] ; then
-           
-            #  check  if the file is iso forma
-            local  iso_file_extension=${iso_path_file##*.}
+            echo "TADA" 
+            is_isofile=$(iso_parser  ${iso_path_file})
+            echo  $is_isofile 
+            # + get the base path 
+            local  iso_name=${iso_path_file##*/}   
             
-            #TODO : [] analize the iso  file   check the boot sector 
-
-            [[   $iso_file_extension  == "iso"   ]]  ||  {
-                    echo  " no iso format found  SIG ERR ${ISO_EXT_NO_FOUND}"
-                    exit ${ISO_EXT_NO_FOUND}
-            } && {
+             #+ if the  iso file  has no boot sector  
+             #+ the programme will be  closed  automaticly  
+            [[  ${is_isofile} -eq  0   ]] || {
+                notify-send "boot sector  not found  X(" 
+                exit ${EXIT_FAILURE} 
+            }&& {
                 declare  -r  input_file=${iso_path_file}
                 declare  -r  output_target=${current_dev}
                 if  [[ -z ${current_dev} ]]  ;  then 
                          echo -e  "ERROR : NO MEDIA DEVICE  FOUND  aborting" 
                          exit  234 
                 fi
-                
+             
                 $(dd  bs=${RW_BYTES} \
                        if=${input_file} \
                        of=${output_target} \
                        oflag=${FLAGS} \
                        status=progress) 
                 [[  $?  -eq 0  ]] && {
-                     echo  -e " [ dOnNnnE]" 
-                     exit  0 
+                     notify-send  " ${iso_name%%-*}: your usb  stik is ready"
+                     exit ${EXIT_SUCCESS}  
                 }||{
-                    echo  -e "some get catched while  building bootable usb" 
+                    echo  -e "some errors  get catched while  building bootable usb" 
                     exit 1
                 }
-            
             }
             
         else 
             echo -e "file not found  in your system  " 
             exit ${FILE_NOT_FOUND}
         fi  
-
-        
         
 }  # -<     usb_bootable_driver   >- 
 
@@ -224,8 +259,8 @@ format_serial_device()  {  # -<  formating  seriale device ->
             $tui --infobox  "Processing  , please wait ..." 5 35  ; sleep $((0x003))   
             # make  choice to select new file system 
             build_fs=$($tui  --title "Serial  device Format" \
-                             --backtitle $(basename $0) \
-                             --radiolist  "file sys recorver" 20 40 15 \
+                             --backtitle ${PN} \
+                             --radiolist  "file sys recorver" 20 40 35 \
                              ext4    ext4    on  \
                              fat     fat     off \
                              cramfs  cramfs  off \
@@ -243,7 +278,7 @@ format_serial_device()  {  # -<  formating  seriale device ->
                              --output-fd 1 ) 
 
             #  install  the fs  in  serial device  
-            $(mkfs -t ${build_fs}  ${current_dev}) 
+            mkfs -t ${build_fs}  ${current_dev} 
             test $? -eq $((0x00))  && {
                 notify-send  "formating done with  ${build_fs} file sys  "  
                 exit 3 
@@ -262,23 +297,24 @@ format_serial_device()  {  # -<  formating  seriale device ->
 
 
 
-}  # -<     format_serial_device  >-
+}  # -< format_serial_device  >-
 
 }  # -< UNIVERSAL_SERIAL_BOOTABLE >-
 
-_::main::_ ()  {
-    hotreload 
+_::main::_ ()  { 
+    hotreload  
     make_mount_point  
-    
+  
     us_boot_main_menu
     case ${g_output_fd} in  
         "1") usb_bootable_driver ;;
         "2") format_serial_device ;;
-        "5")  return ;;  
+        "6")  return ;;  
     esac
+
     return $EXIT_SUCCESS  
 }
 
 _::main::_
 #always umount the device  at the end 
-unmout_device
+unmout_device ${current_dev} 
