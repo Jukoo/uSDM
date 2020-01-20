@@ -62,14 +62,13 @@ $import  ${conf}
     unmout_device  ()  {
         if [[ -n  $1  ]]  ; then
             #+ force  to remove device 
-            $( umount -f  $1 ) 
-            test  $? -eq 0  && {
-                (rm  -r ${MOUNT_TARGET})  
+             umount -f  $1 
+            [[ $? -eq 0 ]] && {
+                rm  -r ${MOUNT_TARGET}  
                  [[ $? -eq 0 ]]  ||   {
                   echo -e "cannot remove device  resource  is busy " 
                   notify-send  "cannot remove device  resource  is busy " 
-                  exit $? 
-                }  
+                 }  
             }|| {
                 echo -e  "failed to umount the device exiting "   
                 read -p " hit the key board to exit"  
@@ -83,7 +82,6 @@ $import  ${conf}
     iso_parser () {
         readonly  iso_metadata=$(file ${1})
         [[   "${iso_metadata}" =~ "${COMMON_ISO_TYPE}" ]] && {
-       
          return  ${EXIT_SUCCESS} 
         }||{
         return  ${EXIT_FAILURE} ; 
@@ -152,36 +150,34 @@ hotreload() {
 make_mount_point ()  {  
     if [[  ! -d ${MOUNT_TARGET} ]]  ; then  
         $(mkdir  ${MOUNT_TARGET})
-        test $? -eq $((0x00))   ||   {
+        [[ $? -eq $((0x00)) ]]   ||   {
             echo -e  "media maker failed  SIG_ERR  ${MEDIA_MAKE_DIR_ERR}" 
             exit ${MEDIA_MAKE_DIR_ERR} 
         } && {
-            echo "mounted"
-        }
-    fi 
-    # chech  if  the device  still plug on the system 
-    IFS=" " read -a  is_device_stay_pluged <<< $(device_partition) 
-    #current_dev=${is_device_stay_pluged[-1]}
-    [[   ${is_device_stay_pluged[-1]} != ${current_dev}  ]]  && { 
+        # chech  if  the device  still plug on the system 
+        IFS=" " read -a  is_device_stay_pluged <<< $(device_partition) 
+
+        [[ ${is_device_stay_pluged[-1]} != ${current_dev}  ]]  && { 
           printf  "%s \n" " device  ${current_dev}  not  found " 
           notify-send  --urgency=critical  " device  ${current_dev} not found" 
           exit $EBRUT_ABORD 
-    }  
-    if  [[ -n $current_dev  ]] ;then  
-        $(mount $current_dev  ${MOUNT_TARGET}) 
-         [[  $? -eq  0  ]] && {
-            # notification signal  
-            if [[ -x  ${uBIN}${NOTIFICATION} ]] ; then   
-                notify-send  "device successfully mounted" 
-             else  
-                notify-send   "device successfully mounted"  
-            fi 
-        }
- 
-    fi 
-}
+        }  
+        if  [[ -n $current_dev  ]] ;then  
+            $(mount $current_dev  ${MOUNT_TARGET}) 
+            [[  $? -eq  0  ]] && {
+            notify-send  "device successfully mounted"     
+            }
+        fi 
 
-#make_mount_point 
+        }
+    else  
+        rm  -rf  ${MOUNT_TARGET}  
+        [[  $?  -eq 0  ]]  ||  {
+            notify-send  "connot remove  ${MOUNT_TARGET##*/}"
+        } 
+    fi 
+      
+   }
 
 declare  g_output_fd
 us_boot_main_menu () {
@@ -234,7 +230,7 @@ usb_bootable_driver () { #  -<  create usb bootable device  >-
                        status=progress) 
                 [[  $?  -eq 0  ]] && {
                      notify-send  " ${iso_name%%-*}: your usb  stik is ready"
-                     exit ${EXIT_SUCCESS}  
+                     _::menu::_  
                 }||{
                     echo  -e "some errors  get catched while  building bootable usb" 
                     exit 1
@@ -242,8 +238,8 @@ usb_bootable_driver () { #  -<  create usb bootable device  >-
             }
             
         else 
-            echo -e "file not found  in your system  " 
-            exit ${FILE_NOT_FOUND}
+            notify-send  "file not found  in your system  " 
+            _::menu::_
         fi  
         
 }  # -<     usb_bootable_driver   >- 
@@ -251,6 +247,8 @@ usb_bootable_driver () { #  -<  create usb bootable device  >-
 format_serial_device()  {  # -<  formating  seriale device -> 
 
    # umount the device
+   notify-send  -u critical "${current_dev}" 
+
    if [[  -n  ${current_dev}  ]]   ; then 
        
         $(umount -f  ${current_dev}) 
@@ -278,17 +276,19 @@ format_serial_device()  {  # -<  formating  seriale device ->
                              --output-fd 1 ) 
 
             #  install  the fs  in  serial device  
+            
             mkfs -t ${build_fs}  ${current_dev} 
-            test $? -eq $((0x00))  && {
-                notify-send  "formating done with  ${build_fs} file sys  "  
-                exit 3 
+            [[ $? -eq $((0x00)) ]]  && {
+                notify-send -u normal "formating done with  ${build_fs} file sys  "  
+                _::menu::_ 
             } || { 
                 notify-send  "fail to format the device  " 
-                exit 3  
+                unmout_device ${current_dev}
+                _::menu::_  
             } 
         } || {
             echo -e "failed  to  umount  your device"  
-            exit  $? 
+            _::menu::_
         }
     else  
          echo  -e  "Undefine device section"
@@ -301,16 +301,26 @@ format_serial_device()  {  # -<  formating  seriale device ->
 
 }  # -< UNIVERSAL_SERIAL_BOOTABLE >-
 
+#+ menu handler  
+_::menu::_ ()  { 
+    if  [[ -n  ${current_dev}  ]]  ; then 
+        us_boot_main_menu
+        case ${g_output_fd} in  
+            "1") usb_bootable_driver ;;
+            "2") format_serial_device ;;
+            "6")  return ;;  
+        esac
+    else 
+        notify-send  "device  not found "
+    fi
+}
+
+
 _::main::_ ()  { 
     hotreload  
-    make_mount_point  
-  
-    us_boot_main_menu
-    case ${g_output_fd} in  
-        "1") usb_bootable_driver ;;
-        "2") format_serial_device ;;
-        "6")  return ;;  
-    esac
+    make_mount_point
+
+    _::menu::_  
 
     return $EXIT_SUCCESS  
 }
