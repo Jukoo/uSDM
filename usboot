@@ -64,7 +64,7 @@ $import  ${conf}
             #+ force  to remove device 
              umount -f  $1 
             [[ $? -eq 0 ]] && {
-                rm  -r ${MOUNT_TARGET}  
+                umount ${MOUNT_TARGET}  
                  [[ $? -eq 0 ]]  ||   {
                   echo -e "cannot remove device  resource  is busy " 
                   notify-send  "cannot remove device  resource  is busy " 
@@ -95,14 +95,26 @@ device_partition  ()  {
     #  get the current device partitions in the system 
     local  device_section=$(blkid | cut -d  : -f1)
     echo ${device_section}
-} 
+}
+
+has_isotype ()  {
+    # + check the current device  has  iso type 
+    # + used for easy formating 
+    local  isotype_device=$(blkid |  grep -i  iso*)
+    local  device_name  
+    if [[ -n  ${isotype_device}  ]]  ; then
+        device_name=$(printf  ${isotype_device} |  cut -d : -f1 ) 
+        [[ -n ${device_name} ]]  &&  echo  ${device_name} 
+    fi
+}
 
 IFS=" " read -a partions <<< $(device_partition)
 
 #+  collect the the lenght  of all block  devices  
 declare actual_partitions_size=${#partions[@]}
 
-declare  current_dev  # pluged  usb divice block  /dev/xxx 
+declare  current_dev    # pluged  usb divice block  /dev/xxx
+declare  -a  IO_DEVICES # 
 
 #+  trun on background  until  the usb device is pluged  into the computer
 #+  look constantly the  locate block device attributes  
@@ -112,6 +124,7 @@ hotreload() {
     
     while [[ true ]] ; do
          IFS=" "  read  -a  dev  <<< $(device_partition)
+         IFS=" "   read  IO_DEVICES  <<< $(device_partition)
          echo  ${#dev[*]}
          #echo  ${actual_partitions_size} 
          #+ if   no change  happen   it means  we have the same  device on start 
@@ -204,7 +217,6 @@ usb_bootable_driver () { #  -<  create usb bootable device  >-
                         --output-fd 1)
          
         if [[ -n $iso_path_file ]] && [[ -f  $iso_path_file ]] ; then
-            echo "TADA" 
             is_isofile=$(iso_parser  ${iso_path_file})
             echo  $is_isofile 
             # + get the base path 
@@ -245,6 +257,19 @@ usb_bootable_driver () { #  -<  create usb bootable device  >-
 }  # -<     usb_bootable_driver   >- 
 
 format_serial_device()  {  # -<  formating  seriale device -> 
+   #----------iso type detection ------------# 
+   #  try to found   isotype  form  in current device  
+   local  isodev_catch=$(has_isotype)
+   if  [[  -n  ${isodev_catch} ]]  ;then 
+        #in case  the  iso  type was found  the program will move 
+        #in the iso type section 
+        for  devs  in ${IO_DEVICES[@]}  ; do
+             if [[  ${isodev_catch}  == ${devs} ]] ; then 
+                current_dev=${isodev_catch}  
+             fi
+        done 
+   fi 
+   #--------end iso type detection ----------# 
 
    # umount the device
    notify-send  -u critical "${current_dev}" 
