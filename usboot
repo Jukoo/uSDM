@@ -36,7 +36,7 @@ readonly PN=$(basename ${0^^})
 declare -i  EXIT_SUCCESS=$((0x00))
 declare -i  EXIT_FAILURE=$((0x01))
 
-readonly  import=source
+readonly  import=.
 conf=esd.cfg
 $import  ${conf} 
 
@@ -45,10 +45,18 @@ $import  ${conf}
     exit ${LOAD_CONF_FAILED} 
 }
 
-[ UID_CHECK ] 
-[[  ${UID}  -eq ${ALLOWED_X_UUID}  ]]   ||  { 
-    echo -e "require root user !! exiting with SIG_ERR  ${NO_ROOT_UID}"
-    exit ${NO_ROOT_UID} 
+[ UID_CHECK ]
+
+[[  ${UID}  -ne ${ALLOWED_X_UUID}  ]]   && {
+    root_log=$($tui --backtitle  ${PN} \
+                      --title "ROOT::LOGIN" \
+                      --insecure \
+                      --passwordbox " require  root password !" 8 50 \
+                      --output-fd 1)
+      [[  -z  ${root_log} ]] && exit ${NO_ROOT_UID} 
+      
+      sudo  -S  <<<  ${root_log}  $0 
+    
 }
 
 [ @PRIVATE ] 
