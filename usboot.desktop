@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=0.1
+Type=Application
+Encoding=UTF-8
+Name=usBoot
+Comment[en_GB]=Basic toolkit usb utilities
+Comment[fr]=Utilitaire  pour usb
+Exec= bash  .~/Desktop/Sandbox/uSDM/usboot
+Categories=Settings;HardwareSettings;
+Icon=~/Desktop/Sandbox/uSDM/icon/usb.png 
+Terminal=true
+StartupNotify=false 
