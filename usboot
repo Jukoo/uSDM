@@ -44,6 +44,14 @@ $import  ${conf}
     echo  "need config file!!"
     exit ${LOAD_CONF_FAILED} 
 }
+#if dialog command its not avalaible in the system it will be downloading before
+[ Dialog_verify ]
+if [[ -z $(find $uBIN -name $tui) ]];then
+	sudo apt-get install $tui
+else
+	echo "$tui its avalaible"
+fi
+
 
 [ UID_CHECK ]
 
